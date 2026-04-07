@@ -56,6 +56,7 @@ interface StealthConfig {
   residentialIp: boolean;
   killSwitch: boolean;
   multiHop: boolean;
+  dns: string;
   netshield: {
     ads: boolean;
     trackers: boolean;
@@ -64,6 +65,13 @@ interface StealthConfig {
 }
 
 // --- Constants ---
+
+const DNS_PROVIDERS = [
+  { id: 'cloudflare', name: 'Cloudflare', address: '1.1.1.1', icon: '⚡' },
+  { id: 'google', name: 'Google DNS', address: '8.8.8.8', icon: '🔍' },
+  { id: 'quad9', name: 'Quad9', address: '9.9.9.9', icon: '🛡️' },
+  { id: 'adguard', name: 'AdGuard', address: '94.140.14.14', icon: '🚫' },
+];
 
 const SERVERS: Server[] = [
   { id: 'us-east', country: 'United States', city: 'New York', flag: '🇺🇸', latency: 24, load: 45, isResidential: true },
@@ -118,12 +126,157 @@ const Toggle = ({ enabled, onChange, label, icon: Icon }: { enabled: boolean, on
   </button>
 );
 
+import { 
+  createUserWithEmailAndPassword, 
+  signInWithEmailAndPassword, 
+  signOut, 
+  onAuthStateChanged,
+  User as FirebaseUser
+} from 'firebase/auth';
+import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
+import { auth, db } from './firebase';
+
+// --- Types ---
+
+interface UserProfile {
+  uid: string;
+  email: string;
+  displayName?: string;
+  createdAt: any;
+  lastLogin: any;
+  subscriptionStatus: 'free' | 'premium';
+}
+
+// ... existing types ...
+
 export default function App() {
+  const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
+  const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [authError, setAuthError] = useState('');
+
   const [status, setStatus] = useState<ConnectionStatus>('disconnected');
+  // ... other states ...
+
+  // Auth Listener
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      setIsAuthLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const handleAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError('');
+    try {
+      if (authMode === 'signup') {
+        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+        const u = userCredential.user;
+        // Create profile in Firestore
+        await setDoc(doc(db, 'users', u.uid), {
+          uid: u.uid,
+          email: u.email,
+          createdAt: serverTimestamp(),
+          lastLogin: serverTimestamp(),
+          subscriptionStatus: 'free'
+        });
+      } else {
+        await signInWithEmailAndPassword(auth, email, password);
+      }
+    } catch (err: any) {
+      setAuthError(err.message);
+    }
+  };
+
+  const handleLogout = async () => {
+    await signOut(auth);
+  };
+
+  if (isAuthLoading) {
+    return (
+      <div className="min-h-screen bg-[#0f172a] flex items-center justify-center">
+        <RefreshCw className="w-12 h-12 text-indigo-500 animate-spin" />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-[#0f172a] text-slate-200 font-sans flex items-center justify-center p-6">
+        <div className="fixed inset-0 pointer-events-none overflow-hidden">
+          <div className="absolute -top-[10%] -left-[10%] w-[40%] h-[40%] bg-indigo-600/20 blur-[120px] rounded-full" />
+          <div className="absolute -bottom-[10%] -right-[10%] w-[40%] h-[40%] bg-blue-600/20 blur-[120px] rounded-full" />
+        </div>
+
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="w-full max-w-md bg-slate-900/40 backdrop-blur-2xl border border-white/10 rounded-[2.5rem] p-8 relative z-10"
+        >
+          <div className="flex flex-col items-center mb-8">
+            <div className="w-16 h-16 bg-gradient-to-br from-indigo-500 to-blue-600 rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-500/20 mb-4">
+              <Shield className="w-10 h-10 text-white" />
+            </div>
+            <h1 className="text-3xl font-display font-bold text-white tracking-tight">GVPN</h1>
+            <p className="text-slate-400 text-sm mt-2">Secure your digital footprint</p>
+          </div>
+
+          <form onSubmit={handleAuth} className="space-y-4">
+            <div>
+              <label className="block text-[10px] uppercase font-bold tracking-widest text-slate-500 mb-1.5 ml-1">Email Address</label>
+              <input 
+                type="email" 
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 text-sm focus:outline-none focus:border-indigo-500 transition-colors"
+                placeholder="name@example.com"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] uppercase font-bold tracking-widest text-slate-500 mb-1.5 ml-1">Password</label>
+              <input 
+                type="password" 
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 px-6 text-sm focus:outline-none focus:border-indigo-500 transition-colors"
+                placeholder="••••••••"
+              />
+            </div>
+
+            {authError && (
+              <p className="text-xs text-rose-400 font-medium px-1">{authError}</p>
+            )}
+
+            <button 
+              type="submit"
+              className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-4 rounded-2xl transition-all shadow-lg shadow-indigo-600/20 active:scale-[0.98]"
+            >
+              {authMode === 'login' ? 'Login to GVPN' : 'Create Account'}
+            </button>
+          </form>
+
+          <div className="mt-8 text-center">
+            <button 
+              onClick={() => setAuthMode(authMode === 'login' ? 'signup' : 'login')}
+              className="text-xs font-bold text-slate-400 hover:text-indigo-400 transition-colors"
+            >
+              {authMode === 'login' ? "Don't have an account? Sign up" : "Already have an account? Login"}
+            </button>
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
   const [selectedServer, setSelectedServer] = useState<Server>(SERVERS[0]);
   const [uptime, setUptime] = useState(0);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<'servers' | 'tunneling' | 'stealth'>('servers');
+  const [activeTab, setActiveTab] = useState<'servers' | 'tunneling' | 'stealth' | 'account'>('servers');
   const [tunnelMode, setTunnelMode] = useState<TunnelingMode>('full');
   const [apps, setApps] = useState<AppConfig[]>(DEFAULT_APPS);
   const [serverSearch, setServerSearch] = useState('');
@@ -133,6 +286,7 @@ export default function App() {
     residentialIp: true,
     killSwitch: true,
     multiHop: false,
+    dns: 'cloudflare',
     netshield: {
       ads: true,
       trackers: true,
@@ -141,6 +295,45 @@ export default function App() {
   });
   const [blockedCount, setBlockedCount] = useState(0);
   const [liveLatency, setLiveLatency] = useState(0);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [newDisplayName, setNewDisplayName] = useState('');
+  const [isUpdatingProfile, setIsUpdatingProfile] = useState(false);
+
+  // Fetch User Profile
+  useEffect(() => {
+    if (user) {
+      const fetchProfile = async () => {
+        const docRef = doc(db, 'users', user.uid);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          const data = docSnap.data() as UserProfile;
+          setUserProfile(data);
+          setNewDisplayName(data.displayName || '');
+        }
+      };
+      fetchProfile();
+    } else {
+      setUserProfile(null);
+    }
+  }, [user]);
+
+  const handleUpdateProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) return;
+    setIsUpdatingProfile(true);
+    try {
+      await setDoc(doc(db, 'users', user.uid), {
+        displayName: newDisplayName,
+        lastLogin: serverTimestamp()
+      }, { merge: true });
+      
+      setUserProfile(prev => prev ? { ...prev, displayName: newDisplayName } : null);
+    } catch (err) {
+      console.error("Error updating profile:", err);
+    } finally {
+      setIsUpdatingProfile(false);
+    }
+  };
 
   // Latency Jitter
   useEffect(() => {
@@ -250,7 +443,8 @@ export default function App() {
             <button onClick={() => setActiveTab('servers')} className={`${activeTab === 'servers' ? 'text-white' : 'hover:text-white'} transition-colors`}>Dashboard</button>
             <button onClick={() => setActiveTab('servers')} className={`${activeTab === 'servers' ? 'text-white' : 'hover:text-white'} transition-colors`}>Servers</button>
             <button onClick={() => setActiveTab('stealth')} className={`${activeTab === 'stealth' ? 'text-white' : 'hover:text-white'} transition-colors`}>Security</button>
-            <a href="#" className="hover:text-white transition-colors">Account</a>
+            <button onClick={() => setActiveTab('account')} className={`${activeTab === 'account' ? 'text-white' : 'hover:text-white'} transition-colors`}>Account</button>
+            <button onClick={handleLogout} className="hover:text-rose-400 transition-colors">Logout</button>
           </nav>
           <div className="h-6 w-px bg-white/10" />
           <button className="p-2 hover:bg-white/5 rounded-lg transition-colors">
@@ -576,6 +770,37 @@ export default function App() {
 
                     <div className="mt-6 mb-4">
                       <h3 className="text-sm font-display font-bold text-white flex items-center gap-2">
+                        <Globe className="w-4 h-4 text-indigo-400" />
+                        Custom DNS
+                      </h3>
+                      <p className="text-[10px] text-slate-500 mt-1">Select your preferred DNS resolver.</p>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      {DNS_PROVIDERS.map((provider) => (
+                        <button
+                          key={provider.id}
+                          onClick={() => setStealth({ ...stealth, dns: provider.id })}
+                          className={`p-3 rounded-xl border text-left transition-all flex flex-col gap-1 ${
+                            stealth.dns === provider.id 
+                              ? 'bg-indigo-600/10 border-indigo-500/50' 
+                              : 'bg-white/5 border-transparent hover:border-white/10'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm">{provider.icon}</span>
+                            {stealth.dns === provider.id && <CheckCircle2 className="w-3 h-3 text-indigo-400" />}
+                          </div>
+                          <p className={`text-[11px] font-bold ${stealth.dns === provider.id ? 'text-white' : 'text-slate-300'}`}>
+                            {provider.name}
+                          </p>
+                          <p className="text-[9px] text-slate-500 font-mono">{provider.address}</p>
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="mt-6 mb-4">
+                      <h3 className="text-sm font-display font-bold text-white flex items-center gap-2">
                         <Shield className="w-4 h-4 text-indigo-400" />
                         NetShield™ Protection
                       </h3>
@@ -629,7 +854,7 @@ export default function App() {
                     </div>
                   </div>
                 </motion.div>
-              ) : (
+              ) : activeTab === 'tunneling' ? (
                 <motion.div 
                   key="tunneling"
                   initial={{ opacity: 0, x: 10 }}
@@ -704,6 +929,78 @@ export default function App() {
                     </div>
                   </div>
                 </motion.div>
+              ) : (
+                <motion.div 
+                  key="account"
+                  initial={{ opacity: 0, x: 10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -10 }}
+                  className="flex-1 flex flex-col overflow-hidden"
+                >
+                  <div className="mb-6">
+                    <h2 className="text-lg font-display font-bold text-white mb-2">Account Settings</h2>
+                    <p className="text-xs text-slate-400 leading-relaxed">
+                      Manage your profile and subscription details.
+                    </p>
+                  </div>
+
+                  <div className="space-y-6">
+                    {/* Profile Info */}
+                    <div className="bg-white/5 border border-white/10 rounded-2xl p-5">
+                      <div className="flex items-center gap-4 mb-4">
+                        <div className="w-12 h-12 bg-indigo-600/20 rounded-full flex items-center justify-center text-indigo-400">
+                          <Shield className="w-6 h-6" />
+                        </div>
+                        <div>
+                          <p className="text-sm font-bold text-white">{userProfile?.displayName || 'User'}</p>
+                          <p className="text-xs text-slate-500">{user?.email}</p>
+                        </div>
+                      </div>
+                      
+                      <div className="pt-4 border-t border-white/5 space-y-3">
+                        <div className="flex justify-between items-center">
+                          <span className="text-[10px] uppercase font-bold tracking-widest text-slate-500">Subscription</span>
+                          <span className="px-2 py-0.5 bg-indigo-500/10 border border-indigo-500/20 rounded text-[10px] font-bold text-indigo-400 uppercase">
+                            {userProfile?.subscriptionStatus || 'Free'} Plan
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-[10px] uppercase font-bold tracking-widest text-slate-500">Member Since</span>
+                          <span className="text-xs text-slate-400">
+                            {userProfile?.createdAt?.toDate ? userProfile.createdAt.toDate().toLocaleDateString() : 'N/A'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Update Profile Form */}
+                    <form onSubmit={handleUpdateProfile} className="space-y-4">
+                      <div>
+                        <label className="block text-[10px] uppercase font-bold tracking-widest text-slate-500 mb-1.5 ml-1">Display Name</label>
+                        <input 
+                          type="text" 
+                          value={newDisplayName}
+                          onChange={(e) => setNewDisplayName(e.target.value)}
+                          placeholder="Enter your name"
+                          className="w-full bg-white/5 border border-white/10 rounded-xl py-3 px-4 text-xs focus:outline-none focus:border-indigo-500 transition-colors"
+                        />
+                      </div>
+                      <button 
+                        type="submit"
+                        disabled={isUpdatingProfile}
+                        className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold py-3 rounded-xl transition-all shadow-lg shadow-indigo-600/20"
+                      >
+                        {isUpdatingProfile ? 'Updating...' : 'Save Changes'}
+                      </button>
+                    </form>
+
+                    <div className="p-4 bg-blue-500/10 border border-blue-500/20 rounded-2xl">
+                      <p className="text-[10px] text-blue-200/70 leading-relaxed">
+                        Your account is secured with military-grade encryption. We never store or log your VPN activity.
+                      </p>
+                    </div>
+                  </div>
+                </motion.div>
               )}
             </AnimatePresence>
 
@@ -756,8 +1053,8 @@ export default function App() {
               <button onClick={() => { setActiveTab('servers'); setIsMenuOpen(false); }} className={activeTab === 'servers' ? 'text-indigo-400' : 'text-slate-400'}>Dashboard</button>
               <button onClick={() => { setActiveTab('servers'); setIsMenuOpen(false); }} className={activeTab === 'servers' ? 'text-indigo-400' : 'text-slate-400'}>Servers</button>
               <button onClick={() => { setActiveTab('stealth'); setIsMenuOpen(false); }} className={activeTab === 'stealth' ? 'text-indigo-400' : 'text-slate-400'}>Security</button>
-              <a href="#" className="text-slate-400">Account</a>
-              <a href="#" className="text-slate-400">Settings</a>
+              <button onClick={() => { setActiveTab('account'); setIsMenuOpen(false); }} className={activeTab === 'account' ? 'text-indigo-400' : 'text-slate-400'}>Account</button>
+              <button onClick={() => { handleLogout(); setIsMenuOpen(false); }} className="text-rose-400">Logout</button>
             </nav>
           </motion.div>
         )}
