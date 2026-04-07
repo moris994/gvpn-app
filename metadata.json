@@ -1,0 +1,5 @@
+{
+  "name": "GVPN: Secure Gateway",
+  "description": "A high-performance, privacy-focused VPN client dashboard with global server access and real-time encryption monitoring.",
+  "requestFramePermissions": []
+}
